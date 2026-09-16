@@ -21,7 +21,14 @@ USER root
 # STABLE_PLUGIN_URL already points at the release-matched extension directory for
 # whatever GEOSERVER_VERSION it carries.
 # ---------------------------------------------------------------------------
-ENV STABLE_EXTENSIONS="control-flow,monitor,css,ysld,mbstyle,vectortiles,importer,wps,wps-download,csw,geopkg-output,querylayer,sldservice,printing,charts,mapml,authkey,web-resource,params-extractor"
+# `printing` is deliberately absent: its zip carries xercesImpl-2.12.2.jar, which
+# wins the webapp-first JAXP service lookup and does not implement the JAXP 1.5
+# property `accessExternalSchema` that GeoServer's WFS Transaction parser sets.
+# With it installed, every WFS-T insert, update and delete answers
+# "Property 'http://javax.xml.XMLConstants/property/accessExternalSchema' is not
+# recognized." while the rest of the server reads perfectly healthy. The guard in
+# the next layer stops any future extension reintroducing it.
+ENV STABLE_EXTENSIONS="control-flow,monitor,css,ysld,mbstyle,vectortiles,importer,wps,wps-download,csw,geopkg-output,querylayer,sldservice,charts,mapml,authkey,web-resource,params-extractor"
 
 RUN set -eux; \
     INSTALL_EXTENSIONS=true bash /opt/install-extensions.sh; \
@@ -35,6 +42,11 @@ RUN set -eux; \
     for jar in gs-control-flow gs-vectortiles; do \
       ls -1 "$gslib/$jar-${GEOSERVER_VERSION}.jar"; \
     done; \
+    if ls -1 "$gslib"/xercesImpl*.jar "$gslib"/xml-apis*.jar 2>/dev/null | grep -q .; then \
+      echo "an extension installed a standalone XML parser; it breaks WFS-T" >&2; \
+      ls -1 "$gslib"/xercesImpl*.jar "$gslib"/xml-apis*.jar 2>/dev/null >&2; \
+      exit 1; \
+    fi; \
     echo "gs-* jars now in the webapp: $(ls -1 "$gslib"/gs-*.jar | wc -l)"
 
 # ---------------------------------------------------------------------------

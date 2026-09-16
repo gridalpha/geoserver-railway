@@ -8,7 +8,7 @@ WFS, WCS and WPS over PostGIS, GeoPackage, Shapefile, GeoTIFF and friends.
 
 ## What this image adds
 
-The upstream image is close to Railway-ready. Five things it cannot express as
+The upstream image is close to Railway-ready. The things it cannot express as
 environment variables are handled here.
 
 **The master password is replaced on first boot.** GeoServer's release data
@@ -54,7 +54,13 @@ service's first-ever deployment.
 
 `control-flow`, `monitor`, `css`, `ysld`, `mbstyle`, `vectortiles`, `importer`,
 `wps`, `wps-download`, `csw`, `geopkg-output`, `querylayer`, `sldservice`,
-`printing`, `charts`, `mapml`, `authkey`, `web-resource`, `params-extractor`.
+`charts`, `mapml`, `authkey`, `web-resource`, `params-extractor`.
+
+`printing` is left out on purpose. Its zip installs `xercesImpl-2.12.2.jar`, which
+wins Tomcat's webapp-first JAXP lookup and does not implement the JAXP 1.5
+`accessExternalSchema` property GeoServer's WFS Transaction parser sets, so every
+WFS-T write fails with a parser error on an otherwise healthy server. A build-layer
+guard fails the image if any extension reintroduces a standalone XML parser.
 
 ## Environment variables
 
