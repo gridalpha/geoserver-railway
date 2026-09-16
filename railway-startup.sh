@@ -7,20 +7,22 @@
 # inherited ENTRYPOINT and CMD are untouched. Everything here runs as root, before
 # the vendor script's chown + privilege drop.
 #
-# It does six things Railway needs and environment variables cannot express:
+# It does seven things Railway needs and environment variables cannot express:
 #
 #   1. Sizes the JVM from the cgroup rather than from the 48-core, ~1 TB host.
 #   2. Repairs POSTGRES_HOST when the ${{postgis.RAILWAY_PRIVATE_DOMAIN}}
 #      reference renders empty, which it does on a first-ever deployment.
-#   3. Seeds the data directory itself, so steps 4 and 5 cannot be overwritten
-#      by the vendor script's own seeding.
-#   4. Replaces the master password. The release data directory ships a fixed,
+#   3. Restores ROOT_WEBAPP_REDIRECT, which supplying a server.xml override
+#      silently turns off, leaving "/" answering 404.
+#   4. Seeds the data directory itself, so the two steps below cannot be
+#      overwritten by the vendor script's own seeding.
+#   5. Replaces the master password. The release data directory ships a fixed,
 #      publicly known one, so without this every deployment shares a `root`
 #      account credential that is published in the GeoServer source tree.
-#   5. Applies the admin credentials once and then stops: the vendor's
+#   6. Applies the admin credentials once and then stops: the vendor's
 #      update_credentials.sh rewrites users.xml and roles.xml from templates on
 #      every boot, discarding any user or role the operator has since created.
-#   6. Writes a default controlflow.properties, which GeoServer's own production
+#   7. Writes a default controlflow.properties, which GeoServer's own production
 #      guidance calls for and no environment variable provides.
 #
 set -eo pipefail
@@ -72,7 +74,23 @@ if [ "${POSTGRES_JNDI_ENABLED}" = "true" ]; then
   export POSTGRES_HOST POSTGRES_PORT
 fi
 
-# --- 3. Seed the data directory ----------------------------------------------
+# --- 3. Keep ROOT_WEBAPP_REDIRECT working ------------------------------------
+# The image adds the ROOT <Context> that serves "/" only when it is rendering its
+# OWN default server.xml, so supplying an override silently turns the redirect off
+# and the deployment's front door answers 404. The Host declares
+# deployOnStartup="false", so the context has to be explicit. Same edit the image
+# makes, applied to the override before the image renders it.
+SERVER_XML_OVERRIDE="${CONFIG_OVERRIDES_DIR}/server.xml"
+if [ "${ROOT_WEBAPP_REDIRECT}" = "true" ] && [ -n "${WEBAPP_CONTEXT}" ] \
+   && [ -f "${SERVER_XML_OVERRIDE}" ] \
+   && ! grep -q 'docBase="ROOT"' "${SERVER_XML_OVERRIDE}"; then
+  log "enabling the ROOT redirect context in ${SERVER_XML_OVERRIDE}"
+  sed -i '\:</Host>:i\<Context override="true" docBase="ROOT" path=""></Context>' "${SERVER_XML_OVERRIDE}"
+  grep -q 'docBase="ROOT"' "${SERVER_XML_OVERRIDE}" \
+    || die "failed to add the ROOT context to ${SERVER_XML_OVERRIDE}"
+fi
+
+# --- 4. Seed the data directory ----------------------------------------------
 mkdir -p "${DATA_DIR}"
 
 if [ "${SKIP_DEMO_DATA}" != "true" ] && [ ! -f "${DATA_DIR}/global.xml" ]; then
@@ -87,7 +105,7 @@ if [ ! -d "${DATA_DIR}/security" ]; then
 fi
 [ -d "${DATA_DIR}/security" ] || die "no security directory in ${DATA_DIR}"
 
-# --- 4. Master password (the `root` account) ----------------------------------
+# --- 5. Master password (the `root` account) ----------------------------------
 # data/release/security/masterpw/default/passwd in the GeoServer source tree is a
 # fixed value encrypted under a key compiled into URLMasterPasswordProvider, so it
 # is a shared default credential, not a secret. Replace it, storing the
@@ -128,7 +146,7 @@ fi
 # Never leave it in the environment the webapp (and anything it runs) can read.
 unset GEOSERVER_MASTER_PASSWORD
 
-# --- 5. Admin credentials, applied once ---------------------------------------
+# --- 6. Admin credentials, applied once ---------------------------------------
 if [ -n "${GEOSERVER_ADMIN_PASSWORD}" ]; then
   ADMIN_USER="${GEOSERVER_ADMIN_USER:-admin}"
   ADM_MARK="${DATA_DIR}/.railway-admin"
@@ -150,7 +168,7 @@ fi
 unset GEOSERVER_ADMIN_USER GEOSERVER_ADMIN_PASSWORD
 unset GEOSERVER_ADMIN_USER_FILE GEOSERVER_ADMIN_PASSWORD_FILE
 
-# --- 6. Request throttling ----------------------------------------------------
+# --- 7. Request throttling ----------------------------------------------------
 CONTROL_FLOW="${DATA_DIR}/controlflow.properties"
 if [ ! -f "${CONTROL_FLOW}" ]; then
   log "writing default request limits to ${CONTROL_FLOW}"
@@ -174,7 +192,7 @@ user.ows.wps.execute=2
 CFPROPS
 fi
 
-# --- 7. Hand over to the image's own launcher ---------------------------------
+# --- 8. Hand over to the image's own launcher ---------------------------------
 if [ "${RUN_UNPRIVILEGED}" = "true" ]; then
   # The vendor script drops to this uid with setpriv, which cannot re-open stdio
   # the runtime created as root.
