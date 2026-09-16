@@ -27,7 +27,9 @@ USER root
 # With it installed, every WFS-T insert, update and delete answers
 # "Property 'http://javax.xml.XMLConstants/property/accessExternalSchema' is not
 # recognized." while the rest of the server reads perfectly healthy. The guard in
-# the next layer stops any future extension reintroducing it.
+# the next layer stops any future extension reintroducing it. It matches only
+# xercesImpl and a versioned xml-apis: xml-apis-ext is Batik's SVG DOM jar,
+# which stock GeoServer ships and which carries no javax.xml classes.
 ENV STABLE_EXTENSIONS="control-flow,monitor,css,ysld,mbstyle,vectortiles,importer,wps,wps-download,csw,geopkg-output,querylayer,sldservice,charts,mapml,authkey,web-resource,params-extractor"
 
 RUN set -eux; \
@@ -42,9 +44,9 @@ RUN set -eux; \
     for jar in gs-control-flow gs-vectortiles; do \
       ls -1 "$gslib/$jar-${GEOSERVER_VERSION}.jar"; \
     done; \
-    if ls -1 "$gslib"/xercesImpl*.jar "$gslib"/xml-apis*.jar 2>/dev/null | grep -q .; then \
-      echo "an extension installed a standalone XML parser; it breaks WFS-T" >&2; \
-      ls -1 "$gslib"/xercesImpl*.jar "$gslib"/xml-apis*.jar 2>/dev/null >&2; \
+    if ls -1 "$gslib"/xercesImpl*.jar "$gslib"/xml-apis-[0-9]*.jar 2>/dev/null | grep -q .; then \
+      echo "an extension installed a standalone JAXP parser; it breaks WFS-T" >&2; \
+      ls -1 "$gslib"/xercesImpl*.jar "$gslib"/xml-apis-[0-9]*.jar 2>/dev/null >&2; \
       exit 1; \
     fi; \
     echo "gs-* jars now in the webapp: $(ls -1 "$gslib"/gs-*.jar | wc -l)"
